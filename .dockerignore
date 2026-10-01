@@ -1,9 +1,0 @@
-node_modules
-.next
-.git
-.env
-.env.production
-runtime
-backups
-deploy-package.tar.gz
-npm-debug.log*
