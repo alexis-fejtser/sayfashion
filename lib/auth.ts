@@ -31,4 +31,4 @@ export async function isAdmin() {
   return verifyAdminToken((await cookies()).get(COOKIE_NAME)?.value);
 }
 
-export const adminCookie = { name: COOKIE_NAME, options: { httpOnly: true, sameSite: "lax" as const, secure: process.env.NODE_ENV === "production", path: "/", maxAge: 7 * 86400 } };
+export const adminCookie = { name: COOKIE_NAME, options: { httpOnly: true, sameSite: "lax" as const, secure: process.env.NODE_ENV === "production" && process.env.COOKIE_SECURE !== "false", path: "/", maxAge: 7 * 86400 } };

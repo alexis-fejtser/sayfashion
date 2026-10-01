@@ -1,9 +1,24 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { Pool } from "pg";
 import type { AiPrompt, Order, Product, StoreData } from "./types";
 
 const dataDir = path.join(process.cwd(), "data");
 const dataFile = path.join(dataDir, "store.json");
+const databaseUrl = process.env.DATABASE_URL;
+const databaseConfigured = Boolean(databaseUrl || process.env.PGHOST);
+
+const globalDatabase = globalThis as unknown as { sayFashionPool?: Pool; sayFashionReady?: Promise<void> };
+
+function getPool() {
+  if (!databaseConfigured) throw new Error("PostgreSQL не настроен");
+  globalDatabase.sayFashionPool ||= new Pool({
+    ...(databaseUrl ? { connectionString: databaseUrl } : {}),
+    max: Number(process.env.DATABASE_POOL_SIZE) || 10,
+    ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
+  });
+  return globalDatabase.sayFashionPool;
+}
 
 const seedProducts: Product[] = [
   {
@@ -47,6 +62,65 @@ const seedProducts: Product[] = [
   },
 ];
 
+async function ensurePostgres() {
+  if (!databaseConfigured) return;
+  if (!globalDatabase.sayFashionReady) {
+    const initialize = (async () => {
+      const pool = getPool();
+      await pool.query(`
+      CREATE TABLE IF NOT EXISTS products (
+        id TEXT PRIMARY KEY,
+        data JSONB NOT NULL,
+        published BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS orders (
+        id TEXT PRIMARY KEY,
+        data JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS ai_prompts (
+        id TEXT PRIMARY KEY,
+        data JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS products_published_created_idx ON products (published, created_at DESC);
+      CREATE INDEX IF NOT EXISTS orders_created_idx ON orders (created_at DESC);
+      CREATE INDEX IF NOT EXISTS ai_prompts_created_idx ON ai_prompts (created_at DESC);
+      `);
+      const existing = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM products");
+      if (existing.rows[0]?.count === "0") {
+        for (const product of seedProducts) {
+          await pool.query(
+            "INSERT INTO products (id, data, published, created_at) VALUES ($1, $2::jsonb, $3, $4) ON CONFLICT (id) DO NOTHING",
+            [product.id, JSON.stringify(product), product.published, product.createdAt],
+          );
+        }
+      }
+    })();
+    globalDatabase.sayFashionReady = initialize.catch((error) => {
+      globalDatabase.sayFashionReady = undefined;
+      throw error;
+    });
+  }
+  return globalDatabase.sayFashionReady;
+}
+
+async function readPostgres(): Promise<StoreData> {
+  await ensurePostgres();
+  const pool = getPool();
+  const [products, orders, prompts] = await Promise.all([
+    pool.query<{ data: Product }>("SELECT data FROM products ORDER BY created_at DESC"),
+    pool.query<{ data: Order }>("SELECT data FROM orders ORDER BY created_at DESC"),
+    pool.query<{ data: AiPrompt }>("SELECT data FROM ai_prompts ORDER BY created_at DESC"),
+  ]);
+  return {
+    products: products.rows.map((row) => row.data),
+    orders: orders.rows.map((row) => row.data),
+    prompts: prompts.rows.map((row) => row.data),
+  };
+}
+
 async function ensureStore() {
   await fs.mkdir(dataDir, { recursive: true });
   try {
@@ -57,6 +131,7 @@ async function ensureStore() {
 }
 
 export async function readStore(): Promise<StoreData> {
+  if (databaseConfigured) return readPostgres();
   await ensureStore();
   const parsed = JSON.parse(await fs.readFile(dataFile, "utf8")) as Partial<StoreData>;
   return { products: parsed.products || [], orders: parsed.orders || [], prompts: parsed.prompts || [] };
@@ -80,6 +155,15 @@ export async function getProducts(includeHidden = false) {
 }
 
 export async function saveProduct(product: Product) {
+  if (databaseConfigured) {
+    await ensurePostgres();
+    await getPool().query(
+      `INSERT INTO products (id, data, published, created_at) VALUES ($1, $2::jsonb, $3, $4)
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, published = EXCLUDED.published, created_at = EXCLUDED.created_at`,
+      [product.id, JSON.stringify(product), product.published, product.createdAt],
+    );
+    return product;
+  }
   const data = await readStore();
   const index = data.products.findIndex((item) => item.id === product.id);
   if (index >= 0) data.products[index] = product;
@@ -89,12 +173,26 @@ export async function saveProduct(product: Product) {
 }
 
 export async function deleteProduct(id: string) {
+  if (databaseConfigured) {
+    await ensurePostgres();
+    await getPool().query("DELETE FROM products WHERE id = $1", [id]);
+    return;
+  }
   const data = await readStore();
   data.products = data.products.filter((product) => product.id !== id);
   await writeStore(data);
 }
 
 export async function saveOrder(order: Order) {
+  if (databaseConfigured) {
+    await ensurePostgres();
+    await getPool().query(
+      `INSERT INTO orders (id, data, created_at) VALUES ($1, $2::jsonb, $3)
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, created_at = EXCLUDED.created_at`,
+      [order.id, JSON.stringify(order), order.createdAt],
+    );
+    return order;
+  }
   const data = await readStore();
   const index = data.orders.findIndex((item) => item.id === order.id);
   if (index >= 0) data.orders[index] = order;
@@ -112,6 +210,15 @@ export async function getPrompts() {
 }
 
 export async function savePrompt(prompt: AiPrompt) {
+  if (databaseConfigured) {
+    await ensurePostgres();
+    await getPool().query(
+      `INSERT INTO ai_prompts (id, data, created_at) VALUES ($1, $2::jsonb, $3)
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, created_at = EXCLUDED.created_at`,
+      [prompt.id, JSON.stringify(prompt), prompt.createdAt],
+    );
+    return prompt;
+  }
   const data = await readStore();
   const index = data.prompts.findIndex((item) => item.id === prompt.id);
   if (index >= 0) data.prompts[index] = prompt;
@@ -121,7 +228,19 @@ export async function savePrompt(prompt: AiPrompt) {
 }
 
 export async function deletePrompt(id: string) {
+  if (databaseConfigured) {
+    await ensurePostgres();
+    await getPool().query("DELETE FROM ai_prompts WHERE id = $1", [id]);
+    return;
+  }
   const data = await readStore();
   data.prompts = data.prompts.filter((prompt) => prompt.id !== id);
   await writeStore(data);
+}
+
+export async function checkDatabase() {
+  if (!databaseConfigured) return { storage: "json", ok: true } as const;
+  await ensurePostgres();
+  await getPool().query("SELECT 1");
+  return { storage: "postgresql", ok: true } as const;
 }

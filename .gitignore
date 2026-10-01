@@ -2,6 +2,10 @@ node_modules/
 .next/
 .env
 .env.local
+.env.production
+deploy-package.tar.gz
+backups/
+dist/
 data/store.json
 public/uploads/*
 !public/uploads/.gitkeep

@@ -19,31 +19,35 @@
 - После тестирования bePaid поставьте `BEPAID_TEST=false`.
 - `EUROPOST_API_URL` и `EUROPOST_SERVICE_NUMBER` уже настроены на публичный API отделений Европочты. Список городов и ПВЗ загружается только из API, кэшируется на 15 минут и повторно проверяется сервером при заказе.
 
-## Сервер hoster.by
+## Деплой на hoster.by без Git
 
-Подходит VPS/VDS с Ubuntu, Docker, Docker Compose, Git и nginx. Один раз на сервере:
+Нужен VPS/VDS с Ubuntu или Debian, публичным IP и SSH-доступом. Весь production-стек работает на одном сервере:
+
+- `shop` — Next.js;
+- `database` — PostgreSQL 17 без публичного порта;
+- `proxy` — Caddy с автоматическим HTTPS;
+- постоянные Docker volumes для базы, фотографий и сертификатов.
+
+Перед первым деплоем направьте A-запись домена на IP сервера. Затем:
+
+1. Запустите `prepare-production.cmd`, введите домен и новый пароль админки. Скрипт перенесёт имеющиеся настройки OpenRouter, bePaid и Европочты из локального `.env`, а системные секреты создаст сам.
+2. Проверьте созданный `.env.production`.
+3. Запустите `deploy-hoster.cmd` и введите IP, SSH-пользователя, порт и папку проекта. Обычно достаточно `root`, `22`, `/opt/sayfashion`.
+4. Введите SSH-пароль в системном запросе. Скрипт установит Docker при необходимости, отправит приложение, поднимет PostgreSQL и проверит `/api/health`.
+
+Для следующих обновлений достаточно повторно запускать `deploy-hoster.cmd`. Git на сервере не требуется.
+
+Production-конфигурация и база не попадают в архив репозитория. PostgreSQL доступна только контейнеру приложения.
+
+### Резервная копия PostgreSQL
+
+На сервере:
 
 ```bash
-git clone <URL-ВАШЕГО-РЕПОЗИТОРИЯ> /opt/say-fashion
-cd /opt/say-fashion
-cp .env.example .env
-nano .env
-docker compose up -d --build
+sudo bash /opt/sayfashion/scripts/backup-db.sh /opt/sayfashion
 ```
 
-В nginx направьте домен на `http://127.0.0.1:3000` и подключите HTTPS. Данные магазина и загруженные фото сохраняются в `runtime/` и переживают пересборку контейнера.
-
-## Автодеплой из GitHub
-
-Workflow запускается при push в `main`. В GitHub → Settings → Secrets and variables → Actions добавьте:
-
-- `DEPLOY_HOST` — IP/домен VPS;
-- `DEPLOY_USER` — SSH-пользователь;
-- `DEPLOY_SSH_KEY` — приватный SSH-ключ;
-- `DEPLOY_PORT` — обычно `22`;
-- `DEPLOY_PATH` — например `/opt/say-fashion`.
-
-После этого архивы вручную загружать не нужно: push в `main` обновит код и контейнер.
+Архив появится в `/opt/sayfashion/backups`. Скрипт хранит резервные копии 14 дней. Каталог следует дополнительно копировать за пределы VPS.
 
 ## Перед боевым запуском
 
