@@ -20,7 +20,6 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT }}
-          script_stop: true
           script: |
             TARGET_PATH="${{ secrets.DEPLOY_PATH }}"
             if [ -z "$TARGET_PATH" ]; then
