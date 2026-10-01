@@ -62,3 +62,6 @@ sudo bash /opt/sayfashion/scripts/backup-db.sh /opt/sayfashion
 - возврат покупателя не считается подтверждением: сервер отдельно запрашивает статус по API bePaid;
 - платёжная форма ограничена тремя попытками и живёт 30 минут;
 - карточные данные магазин не принимает и не хранит — ввод выполняется на странице bePaid.
+
+---
+*Deployed to `/www/sayfashion.by` via GitHub Actions.*
