@@ -13,7 +13,29 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Обновить магазин на сервере
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies & Build (GitHub Actions Runner)
+        run: |
+          npm ci
+          npm run build
+
+      - name: Prepare deployment package
+        run: |
+          tar -czf deploy-package.tar.gz \
+            --exclude=.git \
+            --exclude=node_modules \
+            --exclude=.env \
+            .next public package.json package-lock.json data
+
+      - name: Ensure target directory exists on server
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -23,37 +45,44 @@ jobs:
           script: |
             TARGET_PATH="${{ secrets.DEPLOY_PATH }}"
             if [ -z "$TARGET_PATH" ]; then
-              TARGET_PATH="/www/sayfashion.by"
+              TARGET_PATH="/var/www/h214141/data/www/sayfashion.by"
             fi
-            
             mkdir -p "$TARGET_PATH"
-            cd "$TARGET_PATH"
-            
-            # Удаляем стандартные файлы-затычки хостинга, если они мешают
-            rm -f index.html index.php .htaccess 2>/dev/null || true
-            
-            # Инициализация git, если папка пуста или не является репозиторием
-            if [ ! -d ".git" ]; then
-              echo "Initializing git repository in $TARGET_PATH..."
-              git init
-              git remote add origin https://github.com/alexis-fejtser/sayfashion.git
-            else
-              git remote set-url origin https://github.com/alexis-fejtser/sayfashion.git
+            rm -f "$TARGET_PATH/index.html" "$TARGET_PATH/index.php" "$TARGET_PATH/.htaccess" 2>/dev/null || true
+
+      - name: Upload deployment package
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          source: "deploy-package.tar.gz"
+          target: "${{ secrets.DEPLOY_PATH }}"
+
+      - name: Extract, Install production deps & Restart on Server
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          script: |
+            TARGET_PATH="${{ secrets.DEPLOY_PATH }}"
+            if [ -z "$TARGET_PATH" ]; then
+              TARGET_PATH="/var/www/h214141/data/www/sayfashion.by"
             fi
             
-            git fetch origin main
-            git checkout -B main origin/main
+            cd "$TARGET_PATH"
+            tar -xzf deploy-package.tar.gz
+            rm -f deploy-package.tar.gz
             
-            # Инициализация NVM и окружения Node.js
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
             
-            # Установка зависимостей и сборка приложения
-            npm install
-            npm run build
+            npm install --production
             
-            # Перезапуск приложения через PM2, если он установлен
             if command -v pm2 >/dev/null 2>&1; then
               pm2 restart sayfashion || pm2 start "npm start" --name sayfashion
             fi
