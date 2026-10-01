@@ -44,6 +44,11 @@ jobs:
             git fetch origin main
             git checkout -B main origin/main
             
+            # Инициализация NVM и окружения Node.js
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+            
             # Установка зависимостей и сборка приложения
             npm install
             npm run build
