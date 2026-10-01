@@ -29,11 +29,7 @@ jobs:
 
       - name: Prepare deployment package
         run: |
-          mkdir -p data; tar -czf deploy-package.tar.gz \
-            --exclude=.git \
-            --exclude=node_modules \
-            --exclude=.env \
-            .next public package.json package-lock.json data
+          tar -czf deploy-package.tar.gz --exclude=.git --exclude=node_modules --exclude=.env .next public package.json package-lock.json
 
       - name: Ensure target directory exists on server
         uses: appleboy/ssh-action@v1.2.2
