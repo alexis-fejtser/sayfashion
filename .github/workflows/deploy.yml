@@ -1,0 +1,54 @@
+name: Deploy to hoster.by
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Обновить магазин на сервере
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          script: |
+            TARGET_PATH="${{ secrets.DEPLOY_PATH }}"
+            if [ -z "$TARGET_PATH" ]; then
+              TARGET_PATH="/www/sayfashion.by"
+            fi
+            
+            mkdir -p "$TARGET_PATH"
+            cd "$TARGET_PATH"
+            
+            # Удаляем стандартные файлы-затычки хостинга, если они мешают
+            rm -f index.html index.php .htaccess 2>/dev/null || true
+            
+            # Инициализация git, если папка пуста или не является репозиторием
+            if [ ! -d ".git" ]; then
+              echo "Initializing git repository in $TARGET_PATH..."
+              git init
+              git remote add origin https://github.com/alexis-fejtser/sayfashion.git
+            else
+              git remote set-url origin https://github.com/alexis-fejtser/sayfashion.git
+            fi
+            
+            git fetch origin main
+            git checkout -B main origin/main
+            
+            # Установка зависимостей и сборка приложения
+            npm install
+            npm run build
+            
+            # Перезапуск приложения через PM2, если он установлен
+            if command -v pm2 >/dev/null 2>&1; then
+              pm2 restart sayfashion || pm2 start "npm start" --name sayfashion
+            fi
