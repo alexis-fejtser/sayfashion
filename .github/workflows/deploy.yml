@@ -44,6 +44,11 @@ jobs:
             git fetch origin main
             git checkout -B main origin/main
             
+            # Автоматическая установка Docker и Docker Compose при их отсутствии
+            if [ -f "scripts/setup-server.sh" ]; then
+              bash scripts/setup-server.sh "$TARGET_PATH" "${{ secrets.DEPLOY_USER }}"
+            fi
+            
             # Запуск docker compose
             docker compose up -d --build --remove-orphans
             docker image prune -f
