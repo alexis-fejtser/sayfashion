@@ -19,17 +19,22 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '26' # Рекомендуется стабильная LTS или точная версия с сервера
           cache: 'npm'
 
-      - name: Install dependencies & Build (GitHub Actions Runner)
+      - name: Install dependencies & Build
         run: |
           npm ci
           npm run build
 
       - name: Prepare deployment package
         run: |
-          tar -czf deploy-package.tar.gz --exclude=.git --exclude=node_modules --exclude=.env .next public package.json package-lock.json
+          # Упаковываем .next, статику, package.json и ОБЯЗАТЕЛЬНО next.config.*
+          tar -czf deploy-package.tar.gz \
+            --exclude=.git \
+            --exclude=node_modules \
+            --exclude=.env \
+            .next public package.json package-lock.json next.config.*
 
       - name: Ensure target directory exists on server
         uses: appleboy/ssh-action@v1.2.2
@@ -40,9 +45,7 @@ jobs:
           port: ${{ secrets.DEPLOY_PORT }}
           script: |
             TARGET_PATH="${{ secrets.DEPLOY_PATH }}"
-            if [ -z "$TARGET_PATH" ]; then
-              TARGET_PATH="/var/www/h214141/data/www/sayfashion.by"
-            fi
+            [ -z "$TARGET_PATH" ] && TARGET_PATH="/var/www/h214141/data/www/sayfashion.by"
             mkdir -p "$TARGET_PATH"
             rm -f "$TARGET_PATH/index.html" "$TARGET_PATH/index.php" "$TARGET_PATH/.htaccess" 2>/dev/null || true
 
@@ -54,7 +57,7 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT }}
           source: "deploy-package.tar.gz"
-          target: "${{ secrets.DEPLOY_PATH }}"
+          target: "${{ secrets.DEPLOY_PATH || '/var/www/h214141/data/www/sayfashion.by' }}"
 
       - name: Extract, Install production deps & Restart on Server
         uses: appleboy/ssh-action@v1.2.2
@@ -65,20 +68,22 @@ jobs:
           port: ${{ secrets.DEPLOY_PORT }}
           script: |
             TARGET_PATH="${{ secrets.DEPLOY_PATH }}"
-            if [ -z "$TARGET_PATH" ]; then
-              TARGET_PATH="/var/www/h214141/data/www/sayfashion.by"
-            fi
+            [ -z "$TARGET_PATH" ] && TARGET_PATH="/var/www/h214141/data/www/sayfashion.by"
             
             cd "$TARGET_PATH"
             tar -xzf deploy-package.tar.gz
             rm -f deploy-package.tar.gz
             
+            # Подгружаем окружение NVM сервера
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-            [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
             
-            npm install --production
+            # Установка только production-зависимостей
+            npm install --omit=dev --no-audit --no-fund
             
+            # Перезапуск с правильным именем, портом и явным указанием рабочей директории
             if command -v pm2 >/dev/null 2>&1; then
-              pm2 restart sayfashion || pm2 start "npm start" --name sayfashion
+              PORT=10044 pm2 restart say-fashion --update-env || \
+              PORT=10044 pm2 start npm --name "say-fashion" --cwd "$TARGET_PATH" -- run start
+              pm2 save
             fi
