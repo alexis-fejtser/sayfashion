@@ -19,22 +19,29 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '26' # Рекомендуется стабильная LTS или точная версия с сервера
+          node-version: '26'
           cache: 'npm'
 
       - name: Install dependencies & Build
+        # NEXT_PUBLIC_* переменные обязательно передавать на этапе билда,
+        # так как они вшиваются непосредственно в JS/HTML код страниц.
+        env:
+          NEXT_PUBLIC_SITE_URL: "https://sayfashion.by"
         run: |
           npm ci
           npm run build
 
-      - name: Prepare deployment package
+      - name: Prepare standalone package
         run: |
-          # Упаковываем .next, статику, package.json и ОБЯЗАТЕЛЬНО next.config.*
-          tar -czf deploy-package.tar.gz \
-            --exclude=.git \
-            --exclude=node_modules \
-            --exclude=.env \
-            .next public package.json package-lock.json next.config.*
+          # 1. Копируем клиентские чанки и публичную статику в standalone директорию
+          cp -r .next/static .next/standalone/.next/
+          cp -r public .next/standalone/
+
+          # 2. Архивируем ТОЛЬКО содержимое standalone-сборки
+          # Файл .env намеренно не упаковывается, чтобы не затереть серверный конфиг
+          cd .next/standalone
+          tar -czf ../../deploy-package.tar.gz .
+          cd ../..
 
       - name: Ensure target directory exists on server
         uses: appleboy/ssh-action@v1.2.2
@@ -44,9 +51,9 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT }}
           script: |
-            TARGET_PATH="${{ secrets.DEPLOY_PATH }}"
-            [ -z "$TARGET_PATH" ] && TARGET_PATH="/var/www/h214141/data/www/sayfashion.by"
+            TARGET_PATH="${{ secrets.DEPLOY_PATH || '/var/www/h214141/data/www/sayfashion.by' }}"
             mkdir -p "$TARGET_PATH"
+            # Удаляем стандартные заглушки хостинга, если они появились
             rm -f "$TARGET_PATH/index.html" "$TARGET_PATH/index.php" "$TARGET_PATH/.htaccess" 2>/dev/null || true
 
       - name: Upload deployment package
@@ -59,7 +66,7 @@ jobs:
           source: "deploy-package.tar.gz"
           target: "${{ secrets.DEPLOY_PATH || '/var/www/h214141/data/www/sayfashion.by' }}"
 
-      - name: Extract, Install production deps & Restart on Server
+      - name: Extract & Restart PM2 on Server
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -67,23 +74,19 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT }}
           script: |
-            TARGET_PATH="${{ secrets.DEPLOY_PATH }}"
-            [ -z "$TARGET_PATH" ] && TARGET_PATH="/var/www/h214141/data/www/sayfashion.by"
+            TARGET_PATH="${{ secrets.DEPLOY_PATH || '/var/www/h214141/data/www/sayfashion.by' }}"
             
             cd "$TARGET_PATH"
             tar -xzf deploy-package.tar.gz
             rm -f deploy-package.tar.gz
             
-            # Подгружаем окружение NVM сервера
+            # Подгружаем окружение NVM виртуального пользователя
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             
-            # Установка только production-зависимостей
-            npm install --omit=dev --no-audit --no-fund
-            
-            # Перезапуск с правильным именем, портом и явным указанием рабочей директории
+            # Запуск standalone server.js напрямую через PM2 без npm install
             if command -v pm2 >/dev/null 2>&1; then
-              PORT=10044 pm2 restart say-fashion --update-env || \
-              PORT=10044 pm2 start npm --name "say-fashion" --cwd "$TARGET_PATH" -- run start
+              PORT=10044 pm2 restart sayfashion.by --update-env || \
+              PORT=10044 pm2 start server.js --name "sayfashion.by" --cwd "$TARGET_PATH" --update-env
               pm2 save
             fi
