@@ -17,7 +17,7 @@ async function persistImage(value: string, id: string) {
   await fs.mkdir(directory, { recursive: true });
   const fileName = `${id}.${extension}`;
   await fs.writeFile(path.join(directory, fileName), Buffer.from(match[2], "base64"));
-  return `/uploads/${fileName}`;
+  return `/api/uploads/${fileName}`;
 }
 
 export async function POST(request: Request) {

@@ -86,7 +86,7 @@ jobs:
             
             # Запуск standalone server.js напрямую через PM2 без npm install
             if command -v pm2 >/dev/null 2>&1; then
-              PORT=10044 pm2 restart sayfashion.by --update-env || \
-              PORT=10044 pm2 start server.js --name "sayfashion.by" --cwd "$TARGET_PATH" --update-env
+              PORT=10044 HOSTNAME="0.0.0.0" pm2 restart sayfashion.by --update-env || \
+              PORT=10044 HOSTNAME="0.0.0.0" pm2 start server.js --name "sayfashion.by" --cwd "$TARGET_PATH" --update-env
               pm2 save
             fi
